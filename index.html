@@ -1,0 +1,248 @@
+<html>
+  <head>
+    <title>thruster.rs</title>
+    <meta name="description" content="A fast, middleware based, web framework written in Rust" />
+
+    <link href="https://fonts.googleapis.com/css?family=Roboto+Slab" rel="stylesheet">
+    <style>
+      body {
+        background: #1C1C1C;
+        color: #FFFFFF;
+        font-family: 'Roboto Slab', serif;
+      }
+
+      a {
+        color: #137dff;
+        text-decoration: none;
+        transition: color 0.3s ease-in-out;
+      }
+
+      a:hover {
+        color: #13e7ff;
+      }
+
+      pre {
+        background-color: #4C4C4C;
+        padding: 20px 20px 8px 40px;
+        width: auto;
+        overflow-x: scroll;
+        border-radius: 3px;
+        position: relative;
+      }
+
+      .content {
+        width: 500px;
+        margin: 0 auto;
+      }
+    </style>
+  </head>
+  <body>
+      <a href="https://github.com/trezm/thruster"><img style="position: absolute; top: 0; right: 0; border: 0;" src="https://s3.amazonaws.com/github/ribbons/forkme_right_orange_ff7600.png" alt="Fork me on GitHub"></a>
+    <div class="content">
+    <h1>
+      Thruster
+    </h1>
+
+    <h3>
+      A fast, middleware based, web framework written in Rust
+    </h3>
+
+    <h4>
+      Quick Start
+    </h4>
+    <p>
+      The easiest way to start is to use the <a href="https://github.com/trezm/thruster-cli">thruser-cli</a>. To install, simply run:
+    </p>
+    <pre>
+cargo install thruster-cli
+    </pre>
+    <p>
+      This will install the cli on your computer, so now you can access it via <code>thruster-cli</code>. Once you have that installed, let's start by making a new project:
+    </p>
+    <pre>
+thruster-cli init my-awesome-project
+cd my-awesome-project
+docker-compose up postgres -d
+    </pre>
+    <p>
+      The default thruster project is created with postgres as a backing db as well as a docker setup. The above comands just start postgres in a container, as compiling rust in a docker container can be a bit slow, but the default setup will also run fully in containers if you wish. You'll also notice that all of the code is generated and shown to you as the developer. One of the core tenants of the cli is to not hide code behind "magic."
+    </p>
+    <p>
+      Why don't we make a quick blog! Starting with a "post." To generate a post object, all we have to do is:
+    </p>
+    <pre>
+thruster-cli component post
+    </pre>
+    <p>
+      follow the instructions from the cli to wire up the route.
+    </p>
+    <p>
+      Now you'll see that we have a new model, along with accompanying service and controller. Thruster apps should always be laid out like this; the controller handles actual requests and responses, while an underlying service is a framework agnostic layer that manages the data. If data persistence is required, then a model layer can lie beneath that.
+    </p>
+    <p>
+      The default model only has an id and a test field, so let's update that. Change <code>src/models/posts.rs</code> like so:
+    </p>
+    <pre>
+use crate::schema::posts;
+
+#[derive(Debug, Deserialize, Serialize, Queryable)]
+pub struct Post {
+  pub id: i32,
+  pub title: String,
+  pub content: String
+}
+
+#[derive(Insertable, Debug, Deserialize, Serialize)]
+#[table_name="posts"]
+pub struct NewPost<'a> {
+  pub title: &'a str,
+  pub content: &'a str
+}
+    </pre>
+    <p>
+      This updates our model to have a "title" and "content" fields, which are just strings. We also need to make a migration, update <code>migrations/<some-date>_create_post/up.sql</some-date></code>.
+    </p>
+    <pre>
+CREATE TABLE posts (
+  id         SERIAL  PRIMARY KEY,
+  title      TEXT    NOT NULL,
+  content    TEXT    NOT NULL
+);
+    </pre>
+    <p>
+      Now, we need to run our new sql migrations, and generate our schema (for diesel.) The schema is generated directly from the currently running postgres instance.
+    </p>
+    <pre>
+thruster-cli migrate
+    </pre>
+    <p>
+      You can generate a few new posts now using curl, like this!
+    </p>
+    <pre>
+curl -X POST http://localhost:4321/posts \
+  -H "Content-Type: application/json" \
+  -d '{"title":"My first post!", "content":"I guess this is a really short first post."}'
+    </pre>
+    <p>
+      Posts aren't much good without a way to read them! Let's add some server side rendering. First things first, let's add a templating engine. You can really use anything you'd like, but I really like the feel of <a href="https://github.com/djc/askama">askama</a>. If you're using askama, add <code>askama = "0.7.2"</code> to your <code>Cargo.toml</code> file. Now we'll need to add a <code>templates</code> folder. In which, we'll add a file called <code>post.html</code> and add the following:
+    </p>
+    <pre>
+&lt;html&gt;
+  &lt;body&gt;
+    &lt;h1&gt;{{ title }}&lt;/h1&gt;
+    &lt;p&gt;{{ content }}&lt;/p&gt;
+  &lt;/body&gt;
+&lt;/html&gt;
+    </pre>
+    <p>
+      The first thing we're going to do is create a controller. We won't need a full controller-service-model combo, so let's make a new blank file, <code>src/pages/pages_controller.rs</code>
+    </p>
+    <pre>
+use crate::context::{ Ctx };
+use thruster::{MiddlewareChain, MiddlewareReturnValue};
+
+use crate::posts::post_service;
+use crate::models::posts::{ Post };
+use futures::future;
+use std::boxed::Box;
+use askama::Template;
+
+#[derive(Template)]
+#[template(path = "post.html")]
+struct PostTemplate<'a> {
+  title: &'a str,
+  content: &'a str
+}
+
+pub fn get_post(mut context: Ctx, _next: impl Fn(Ctx) -> MiddlewareReturnValue<Ctx>  + Send + Sync) -> MiddlewareReturnValue<Ctx> {
+  fn error(mut context: Ctx) -> MiddlewareReturnValue<Ctx> {
+    context.status(400);
+    context.body("Could not get Post");
+    Box::new(future::ok(context))
+  }
+
+  let id = match context.params.get("id") {
+    Some(_id) => _id,
+    None => return error(context)
+  };
+
+  let id_as_number = match id.parse::<i32>() {
+    Ok(_id_as_number) => _id_as_number,
+    Err(_) => return error(context)
+  };
+
+  let fetched_result = match post_service::get_post(id_as_number) {
+    Ok(_fetched_result) => _fetched_result,
+    Err(_) => return error(context)
+  };
+
+  let template = PostTemplate {
+    title: &fetched_result.title,
+    content: &fetched_result.content
+  };
+
+  context.body(&template.render().unwrap());
+
+  Box::new(future::ok(context))
+}
+    </pre>
+    <p>
+      The first part, <code>fn error...</code> is a convenience method for generating an error response. Then, we fetch the "id" from the route parameters of the request. Then, we have to parse that parameter into an integer. We then fetch the post using the newly parsed id, and finally we render a the template with the recently fetched post data.
+    </p>
+    <p>
+      We have to also add this to the <code>src/pages/mod.rs</code> file. This serves as the route linking for the controller:
+    </p>
+    <pre>
+mod pages_controller;
+
+use thruster::{App, middleware, MiddlewareChain, MiddlewareReturnValue, Request};
+use crate::context::{generate_context, Ctx};
+use crate::pages::pages_controller::{
+  get_post
+};
+
+pub fn init() -> App<Request, Ctx> {
+  let mut subroute = App::<Request, Ctx>::create(generate_context);
+
+  subroute.get("/:id", middleware![Ctx => get_post]);
+
+  subroute
+}
+    </pre>
+    <p>
+      And finally, we add this to the main file, we need to add <code>mod pages;</code> as well as <code>use crate::pages::{init as page_routes};</code>. In order to actually call the route, we add this:
+    </p>
+    <pre>
+app.use_sub_app("/pages", page_routes());
+    </pre>
+    <p>
+      Now, assuming you've created a post using curl, you can visit <code>http://localhost:4321/pages/1</code> and see your very first post!
+    </p>
+    </div>
+    <script>
+document.addEventListener("DOMContentLoaded", function() {
+  addLines();
+});
+
+function addLines() {
+  const preBlocks = document.getElementsByTagName("pre");
+
+  for (var i = 0; i < preBlocks.length; i++) {
+    const preBlock = preBlocks[i];
+
+    const count = (preBlock.innerHTML.match(/\n/g) || []).length;
+
+    for (var j = 0; j < count; j++) {
+      const el = document.createElement("div");
+      el.innerHTML = j + 1;
+      el.className = "line-number";
+      el.style.position = "absolute";
+      el.style.top = `${20 + 15 * j}px`;
+      el.style.left = "10px";
+      preBlock.appendChild(el);
+    }
+  }
+}
+    </script>
+  </body>
+</html>
