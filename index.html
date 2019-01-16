@@ -9,6 +9,7 @@
         background: #1C1C1C;
         color: #FFFFFF;
         font-family: 'Roboto Slab', serif;
+        padding: 40px;
       }
 
       a {
@@ -23,7 +24,7 @@
 
       pre {
         background-color: #4C4C4C;
-        padding: 20px 20px 8px 40px;
+        padding: 8px 8px 0 40px;
         width: auto;
         overflow-x: scroll;
         border-radius: 3px;
@@ -51,7 +52,7 @@
       Quick Start
     </h4>
     <p>
-      The easiest way to start is to use the <a href="https://github.com/trezm/thruster-cli">thruser-cli</a>. To install, simply run:
+      The easiest way to start is to use the <a href="https://github.com/trezm/thruster-cli">thruster-cli</a>. To install, simply run:
     </p>
     <pre>
 cargo install thruster-cli
@@ -237,7 +238,7 @@ function addLines() {
       el.innerHTML = j + 1;
       el.className = "line-number";
       el.style.position = "absolute";
-      el.style.top = `${20 + 15 * j}px`;
+      el.style.top = `${8 + 15 * j}px`;
       el.style.left = "10px";
       preBlock.appendChild(el);
     }
